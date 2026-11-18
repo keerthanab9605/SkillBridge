@@ -1,0 +1,12 @@
+import { Router } from 'express';
+import User from '../models/User.js';
+import Job from '../models/Job.js';
+import Application from '../models/Application.js';
+import { protect, allow } from '../middleware/auth.js';
+const router = Router();
+router.use(protect, allow('admin'));
+router.get('/overview', async (_req, res, next) => { try { const [users, jobs, applications, recruiters] = await Promise.all([User.countDocuments(), Job.countDocuments(), Application.countDocuments(), User.countDocuments({ role: 'recruiter' })]); res.json({ users, jobs, applications, recruiters }); } catch (e) { next(e); } });
+router.get('/users', async (_req, res, next) => { try { const users = await User.find().select('-password').sort({ createdAt: -1 }).limit(500); res.json({ users }); } catch (e) { next(e); } });
+router.patch('/users/:id/role', async (req, res, next) => { try { if (!['student', 'recruiter', 'admin'].includes(req.body.role)) return res.status(400).json({ message: 'Invalid role.' }); if (String(req.user._id) === req.params.id && req.body.role !== 'admin') return res.status(400).json({ message: 'You cannot remove your own admin role.' }); const user = await User.findByIdAndUpdate(req.params.id, { role: req.body.role }, { new: true }).select('-password'); if (!user) return res.status(404).json({ message: 'User not found.' }); res.json({ user }); } catch (e) { next(e); } });
+router.delete('/jobs/:id', async (req, res, next) => { try { await Job.findByIdAndDelete(req.params.id); await Application.deleteMany({ job: req.params.id }); res.json({ message: 'Job and related applications deleted.' }); } catch (e) { next(e); } });
+export default router;

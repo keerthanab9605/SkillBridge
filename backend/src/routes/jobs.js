@@ -1,0 +1,23 @@
+import { Router } from 'express';
+import Job from '../models/Job.js';
+import Application from '../models/Application.js';
+import { protect, allow } from '../middleware/auth.js';
+const router = Router();
+router.get('/', async (req, res, next) => { try {
+  const { q, type, mode, location, page = 1, limit = 8 } = req.query;
+  const filter = { status: 'active' };
+  if (type && type !== 'All types') filter.type = type;
+  if (mode && mode !== 'All modes') filter.mode = mode;
+  if (location) filter.location = { $regex: location, $options: 'i' };
+  if (q) filter.$or = [{ title: { $regex: q, $options: 'i' } }, { company: { $regex: q, $options: 'i' } }, { skills: { $regex: q, $options: 'i' } }, { description: { $regex: q, $options: 'i' } }];
+  const p = Math.max(1, Number(page)); const n = Math.min(30, Math.max(1, Number(limit)));
+  const [jobs, total] = await Promise.all([Job.find(filter).populate('recruiter', 'name').sort({ featured: -1, createdAt: -1 }).skip((p - 1) * n).limit(n), Job.countDocuments(filter)]);
+  res.json({ jobs, total, page: p, pages: Math.ceil(total / n) });
+} catch (e) { next(e); } });
+router.get('/:id', async (req, res, next) => { try { const job = await Job.findById(req.params.id).populate('recruiter', 'name'); if (!job) return res.status(404).json({ message: 'Job not found.' }); res.json({ job }); } catch (e) { next(e); } });
+router.post('/', protect, allow('recruiter', 'admin'), async (req, res, next) => { try { const job = await Job.create({ ...req.body, recruiter: req.user._id }); res.status(201).json({ job }); } catch (e) { next(e); } });
+router.patch('/:id', protect, allow('recruiter', 'admin'), async (req, res, next) => { try { const job = await Job.findById(req.params.id); if (!job) return res.status(404).json({ message: 'Job not found.' }); if (req.user.role !== 'admin' && !job.recruiter.equals(req.user._id)) return res.status(403).json({ message: 'You can only edit your own listings.' }); Object.assign(job, req.body); await job.save(); res.json({ job }); } catch (e) { next(e); } });
+router.delete('/:id', protect, allow('recruiter', 'admin'), async (req, res, next) => { try { const job = await Job.findById(req.params.id); if (!job) return res.status(404).json({ message: 'Job not found.' }); if (req.user.role !== 'admin' && !job.recruiter.equals(req.user._id)) return res.status(403).json({ message: 'You can only delete your own listings.' }); await job.deleteOne(); await Application.deleteMany({ job: job._id }); res.json({ message: 'Listing deleted.' }); } catch (e) { next(e); } });
+router.post('/:id/save', protect, allow('student'), async (req, res, next) => { try { const job = await Job.findById(req.params.id); if (!job) return res.status(404).json({ message: 'Job not found.' }); const id = String(job._id); const exists = req.user.savedJobs.some(x => String(x) === id); req.user.savedJobs = exists ? req.user.savedJobs.filter(x => String(x) !== id) : [...req.user.savedJobs, job._id]; await req.user.save(); res.json({ saved: !exists }); } catch (e) { next(e); } });
+router.post('/:id/apply', protect, allow('student'), async (req, res, next) => { try { const job = await Job.findById(req.params.id); if (!job || job.status !== 'active') return res.status(404).json({ message: 'This listing is no longer available.' }); const application = await Application.create({ student: req.user._id, job: job._id, coverLetter: req.body.coverLetter || '' }); res.status(201).json({ application }); } catch (e) { if (e.code === 11000) return res.status(409).json({ message: 'You have already applied to this opportunity.' }); next(e); } });
+export default router;

@@ -1,0 +1,14 @@
+import { Router } from 'express';
+import multer from 'multer';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { protect } from '../middleware/auth.js';
+import Job from '../models/Job.js';
+const router = Router();
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const storage = multer.diskStorage({ destination: path.resolve(__dirname, '../../uploads'), filename: (req, file, cb) => cb(null, `${req.user._id}-${Date.now()}${path.extname(file.originalname).toLowerCase()}`) });
+const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 }, fileFilter: (_req, file, cb) => cb(null, ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'].includes(file.mimetype)) });
+router.get('/', protect, async (req, res, next) => { try { const user = req.user.toObject(); delete user.password; const savedJobs = await Job.find({ _id: { $in: req.user.savedJobs } }).sort({ createdAt: -1 }); res.json({ user, savedJobs }); } catch (e) { next(e); } });
+router.patch('/', protect, async (req, res, next) => { try { const allowed = ['name', 'headline', 'location', 'bio', 'skills']; for (const key of allowed) if (req.body[key] !== undefined) req.user[key] = req.body[key]; await req.user.save(); const user = req.user.toObject(); delete user.password; res.json({ user }); } catch (e) { next(e); } });
+router.post('/resume', protect, upload.single('resume'), async (req, res, next) => { try { if (!req.file) return res.status(400).json({ message: 'Upload a PDF, DOC or DOCX file under 5 MB.' }); req.user.resumeUrl = `/uploads/${req.file.filename}`; await req.user.save(); res.json({ resumeUrl: req.user.resumeUrl }); } catch (e) { next(e); } });
+export default router;
